@@ -5,9 +5,7 @@ builder = "nixpacks"
 startCommand = "python license_logger.py"
 healthcheckPath = "/health"
 healthcheckTimeout = 300
-restartPolicyType = "on-failure"
-restartPolicyMaxRetries = 5
 
-[mount]
+[[mounts]]
 source = "/data"
 destination = "/data"
