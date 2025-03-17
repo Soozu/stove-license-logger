@@ -5,7 +5,3 @@ builder = "nixpacks"
 startCommand = "python -m gunicorn license_logger:app"
 healthcheckPath = "/health"
 healthcheckTimeout = 300
-
-[[mounts]]
-source = "/data"
-destination = "/data"
