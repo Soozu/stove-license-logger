@@ -1,11 +1,11 @@
 [build]
-builder = "NIXPACKS"
-buildCommand = "pip install -r requirements.txt"
+builder = "DOCKERFILE"
 
 [deploy]
-startCommand = "gunicorn license_logger:app"
 healthcheckPath = "/health"
+healthcheckTimeout = 300
 restartPolicyType = "ON_FAILURE"
 
 [[services]]
-name = "license-logger"
+internal_port = 8080
+protocol = "http"
