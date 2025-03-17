@@ -391,16 +391,38 @@ print(f"Database path: {os.path.abspath(DB_PATH)}")
 
 if __name__ == '__main__':
     try:
-        # Comment out database initialization temporarily
-        # print("Initializing database...")
-        # init_db()
-        # print("Database initialized successfully")
-        
         print(f"Starting license logger server on {HOST}:{PORT}")
         print(f"Debug mode: {DEBUG}")
         
-        app.run(host=HOST, port=PORT, debug=DEBUG)
-        
+        # For local development
+        if os.environ.get('ENVIRONMENT') == 'development':
+            app.run(host=HOST, port=PORT, debug=DEBUG)
+        else:
+            # For production, let gunicorn handle the server
+            import gunicorn.app.base
+            
+            class StandaloneApplication(gunicorn.app.base.BaseApplication):
+                def __init__(self, app, options=None):
+                    self.options = options or {}
+                    self.application = app
+                    super().__init__()
+
+                def load_config(self):
+                    for key, value in self.options.items():
+                        self.cfg.set(key.lower(), value)
+
+                def load(self):
+                    return self.application
+
+            options = {
+                'bind': f'{HOST}:8080',
+                'workers': 4,
+                'worker_class': 'sync',
+                'timeout': 120
+            }
+            
+            StandaloneApplication(app, options).run()
+            
     except Exception as e:
         print(f"Startup error: {e}")
         raise 
