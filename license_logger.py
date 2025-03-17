@@ -4,6 +4,7 @@ import sqlite3
 import os
 from flask_cors import CORS
 from functools import wraps
+import requests
 
 app = Flask(__name__)
 CORS(app)
@@ -306,4 +307,13 @@ if __name__ == '__main__':
     init_db()
     print(f"Starting license logger server on {HOST}:{PORT}")
     print(f"Debug mode: {DEBUG}")
+
+    # Test the logger server
+    try:
+        response = requests.get("https://stove-license-logger-production.up.railway.app/health")
+        print(f"Logger server status: {response.status_code}")
+        print(response.json())
+    except Exception as e:
+        print(f"Error connecting to logger server: {e}")
+
     app.run(host=HOST, port=PORT, debug=DEBUG) 
