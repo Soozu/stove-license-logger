@@ -87,6 +87,8 @@ def log_validation():
     """Log a license validation attempt"""
     try:
         data = request.get_json()
+        print(f"Received log request: {data}")  # Add debug logging
+        
         license_key = data.get('license_key')
         user_id = data.get('user_id', 'unknown')
         status = data.get('status', 'unknown')
@@ -237,6 +239,63 @@ def get_summary_stats():
         return jsonify({
             'summary': summary,
             'recent_activity': recent_logs
+        })
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/logs/user-activity', methods=['GET'])
+@require_api_key
+def get_user_activity():
+    """Get user login activity"""
+    try:
+        license_key = request.args.get('license_key')
+        days = int(request.args.get('days', 7))  # Default to 7 days
+        
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        
+        query = '''
+            SELECT 
+                timestamp,
+                license_key,
+                user_id,
+                status,
+                ip_address,
+                device_info,
+                additional_info
+            FROM license_logs 
+            WHERE license_key = ? 
+            AND timestamp >= datetime('now', ?)
+            ORDER BY timestamp DESC
+        '''
+        
+        c.execute(query, (license_key, f'-{days} days'))
+        
+        activity = [dict(zip([col[0] for col in c.description], row)) 
+                   for row in c.fetchall()]
+        
+        # Get summary statistics
+        c.execute('''
+            SELECT 
+                COUNT(*) as total_attempts,
+                SUM(CASE WHEN status = 'valid' THEN 1 ELSE 0 END) as successful_logins,
+                SUM(CASE WHEN status != 'valid' THEN 1 ELSE 0 END) as failed_attempts,
+                COUNT(DISTINCT ip_address) as unique_ips,
+                COUNT(DISTINCT device_info) as unique_devices
+            FROM license_logs 
+            WHERE license_key = ?
+            AND timestamp >= datetime('now', ?)
+        ''', (license_key, f'-{days} days'))
+        
+        stats = dict(zip([col[0] for col in c.description], c.fetchone()))
+        
+        conn.close()
+        
+        return jsonify({
+            'activity': activity,
+            'statistics': stats,
+            'period': f'Last {days} days'
         })
         
     except Exception as e:
