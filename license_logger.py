@@ -25,6 +25,7 @@ DB_PATH = os.environ.get('LOG_DB_PATH', '/tmp/license_logs.db')
 
 def ensure_db_directory():
     """Ensure the database directory exists and is writable"""
+    global DB_PATH
     try:
         db_dir = os.path.dirname(DB_PATH)
         if db_dir and not os.path.exists(db_dir):
@@ -38,7 +39,6 @@ def ensure_db_directory():
     except Exception as e:
         print(f"Error ensuring database directory: {e}")
         # Fall back to tmp directory if we can't write to the specified location
-        global DB_PATH
         DB_PATH = '/tmp/license_logs.db'
         print(f"Falling back to temporary directory: {DB_PATH}")
 
