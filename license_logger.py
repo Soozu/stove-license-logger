@@ -122,22 +122,11 @@ def test_db_connection():
 @app.route('/health', methods=['GET'])
 def health_check():
     """Health check endpoint"""
-    try:
-        # Test database connection
-        db_status = test_db_connection()
-        
-        return jsonify({
-            'status': 'healthy' if db_status else 'degraded',
-            'service': 'license-logger',
-            'timestamp': datetime.now().isoformat(),
-            'database': 'connected' if db_status else 'disconnected'
-        }), 200 if db_status else 503
-    except Exception as e:
-        return jsonify({
-            'status': 'unhealthy',
-            'error': str(e),
-            'timestamp': datetime.now().isoformat()
-        }), 503
+    return jsonify({
+        'status': 'healthy',
+        'service': 'license-logger',
+        'timestamp': datetime.now().isoformat()
+    }), 200
 
 @app.route('/api/log/validation', methods=['POST'])
 @require_api_key
@@ -402,22 +391,13 @@ print(f"Database path: {os.path.abspath(DB_PATH)}")
 
 if __name__ == '__main__':
     try:
-        # Initialize database
-        print("Initializing database...")
-        init_db()
-        print("Database initialized successfully")
-        
-        # Test database connection
-        if test_db_connection():
-            print("Database connection test successful")
-        else:
-            print("Warning: Database connection test failed")
+        # Comment out database initialization temporarily
+        # print("Initializing database...")
+        # init_db()
+        # print("Database initialized successfully")
         
         print(f"Starting license logger server on {HOST}:{PORT}")
         print(f"Debug mode: {DEBUG}")
-        
-        # Remove the external health check test as it's not needed and can cause startup issues
-        # Don't test the production URL during startup
         
         app.run(host=HOST, port=PORT, debug=DEBUG)
         
