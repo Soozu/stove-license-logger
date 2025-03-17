@@ -10,8 +10,12 @@ app = Flask(__name__)
 CORS(app)
 
 # Configuration
-PORT = int(os.environ.get('PORT', 8080))  # Railway.app uses port 8080 by default
-HOST = os.environ.get('HOST', '0.0.0.0')
+try:
+    PORT = int(os.environ.get('PORT', '8080'))  # Railway provides PORT env var
+except ValueError:
+    PORT = 8080
+
+HOST = '0.0.0.0'  # Always use 0.0.0.0 for production
 DEBUG = os.environ.get('DEBUG', 'False').lower() == 'true'
 API_KEY = os.environ.get('API_KEY', 'STOVE_ADMIN_2024_SECRET')
 
@@ -394,34 +398,8 @@ if __name__ == '__main__':
         print(f"Starting license logger server on {HOST}:{PORT}")
         print(f"Debug mode: {DEBUG}")
         
-        # For local development
-        if os.environ.get('ENVIRONMENT') == 'development':
-            app.run(host=HOST, port=PORT, debug=DEBUG)
-        else:
-            # For production, let gunicorn handle the server
-            import gunicorn.app.base
-            
-            class StandaloneApplication(gunicorn.app.base.BaseApplication):
-                def __init__(self, app, options=None):
-                    self.options = options or {}
-                    self.application = app
-                    super().__init__()
-
-                def load_config(self):
-                    for key, value in self.options.items():
-                        self.cfg.set(key.lower(), value)
-
-                def load(self):
-                    return self.application
-
-            options = {
-                'bind': f'{HOST}:8080',
-                'workers': 4,
-                'worker_class': 'sync',
-                'timeout': 120
-            }
-            
-            StandaloneApplication(app, options).run()
+        # Simple startup - let gunicorn handle the server
+        app.run(host=HOST, port=PORT, debug=DEBUG)
             
     except Exception as e:
         print(f"Startup error: {e}")
