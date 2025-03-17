@@ -1,11 +1,13 @@
 [build]
-builder = "DOCKERFILE"
+builder = "nixpacks"
 
 [deploy]
+startCommand = "python license_logger.py"
 healthcheckPath = "/health"
 healthcheckTimeout = 300
-restartPolicyType = "ON_FAILURE"
+restartPolicyType = "on-failure"
+restartPolicyMaxRetries = 5
 
-[[services]]
-internal_port = 8080
-protocol = "http"
+[mount]
+source = "/data"
+destination = "/data"

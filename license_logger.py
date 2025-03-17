@@ -73,14 +73,37 @@ def index():
         'timestamp': datetime.now().isoformat()
     })
 
+# Add this new function to test database connection
+def test_db_connection():
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute('SELECT 1')  # Simple test query
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"Database connection test failed: {e}")
+        return False
+
 @app.route('/health', methods=['GET'])
 def health_check():
     """Health check endpoint"""
-    return jsonify({
-        'status': 'online',
-        'service': 'license-logger',
-        'timestamp': datetime.now().isoformat()
-    })
+    try:
+        # Test database connection
+        db_status = test_db_connection()
+        
+        return jsonify({
+            'status': 'healthy' if db_status else 'degraded',
+            'service': 'license-logger',
+            'timestamp': datetime.now().isoformat(),
+            'database': 'connected' if db_status else 'disconnected'
+        }), 200 if db_status else 503
+    except Exception as e:
+        return jsonify({
+            'status': 'unhealthy',
+            'error': str(e),
+            'timestamp': datetime.now().isoformat()
+        }), 503
 
 @app.route('/api/log/validation', methods=['POST'])
 @require_api_key
@@ -303,17 +326,26 @@ def get_user_activity():
         return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
-    # Initialize database
-    init_db()
-    print(f"Starting license logger server on {HOST}:{PORT}")
-    print(f"Debug mode: {DEBUG}")
-
-    # Test the logger server
     try:
-        response = requests.get("https://stove-license-logger-production.up.railway.app/health")
-        print(f"Logger server status: {response.status_code}")
-        print(response.json())
+        # Initialize database
+        print("Initializing database...")
+        init_db()
+        print("Database initialized successfully")
+        
+        # Test database connection
+        if test_db_connection():
+            print("Database connection test successful")
+        else:
+            print("Warning: Database connection test failed")
+        
+        print(f"Starting license logger server on {HOST}:{PORT}")
+        print(f"Debug mode: {DEBUG}")
+        
+        # Remove the external health check test as it's not needed and can cause startup issues
+        # Don't test the production URL during startup
+        
+        app.run(host=HOST, port=PORT, debug=DEBUG)
+        
     except Exception as e:
-        print(f"Error connecting to logger server: {e}")
-
-    app.run(host=HOST, port=PORT, debug=DEBUG) 
+        print(f"Startup error: {e}")
+        raise 
