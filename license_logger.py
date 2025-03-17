@@ -25,12 +25,13 @@ def ensure_db_directory():
 
 def init_db():
     """Initialize SQLite database for license logs"""
-    ensure_db_directory()
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    
-    # Create logs table
-    c.execute('''CREATE TABLE IF NOT EXISTS license_logs
+    try:
+        ensure_db_directory()
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        
+        # Create logs table
+        c.execute('''CREATE TABLE IF NOT EXISTS license_logs
                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
                   license_key TEXT NOT NULL,
                   user_id TEXT,
@@ -40,18 +41,51 @@ def init_db():
                   device_info TEXT,
                   timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
                   additional_info TEXT)''')
-    
-    # Create summary table for quick statistics
-    c.execute('''CREATE TABLE IF NOT EXISTS license_stats
+        
+        # Create summary table for quick statistics
+        c.execute('''CREATE TABLE IF NOT EXISTS license_stats
                  (license_key TEXT PRIMARY KEY,
                   total_validations INTEGER DEFAULT 0,
                   last_validation DATETIME,
                   active_devices INTEGER DEFAULT 0,
                   failed_attempts INTEGER DEFAULT 0,
                   last_ip TEXT)''')
-    
-    conn.commit()
-    conn.close()
+        
+        # Check if tables are empty
+        c.execute("SELECT COUNT(*) FROM license_logs")
+        log_count = c.fetchone()[0]
+        
+        if log_count == 0:
+            # Insert some initial test data
+            print("Adding initial test data...")
+            test_data = [
+                ('STOVE-202403-TEST1', 'TEST1', 'validation', 'valid', 
+                 '127.0.0.1', '{"os": "test"}', 'Initial test data'),
+                ('STOVE-202403-TEST2', 'TEST2', 'validation', 'invalid', 
+                 '127.0.0.1', '{"os": "test"}', 'Test invalid attempt'),
+            ]
+            
+            c.executemany('''INSERT INTO license_logs 
+                            (license_key, user_id, action, status, ip_address, 
+                             device_info, additional_info)
+                            VALUES (?, ?, ?, ?, ?, ?, ?)''', test_data)
+            
+            # Insert test statistics
+            c.execute('''INSERT INTO license_stats 
+                        (license_key, total_validations, last_validation, 
+                         active_devices, failed_attempts, last_ip)
+                        VALUES (?, ?, CURRENT_TIMESTAMP, ?, ?, ?)''',
+                     ('STOVE-202403-TEST1', 1, 1, 0, '127.0.0.1'))
+                     
+        conn.commit()
+        print(f"Database initialized at {DB_PATH}")
+        print(f"Current log count: {log_count}")
+        
+    except Exception as e:
+        print(f"Error initializing database: {e}")
+        raise
+    finally:
+        conn.close()
 
 def require_api_key(f):
     """Decorator to check API key"""
@@ -324,6 +358,47 @@ def get_user_activity():
         
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+# Add this function to check database content
+@app.route('/api/debug/db-status', methods=['GET'])
+@require_api_key
+def debug_db_status():
+    """Debug endpoint to check database status"""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        
+        # Get table counts
+        c.execute("SELECT COUNT(*) FROM license_logs")
+        log_count = c.fetchone()[0]
+        
+        c.execute("SELECT COUNT(*) FROM license_stats")
+        stats_count = c.fetchone()[0]
+        
+        # Get recent logs
+        c.execute("""SELECT * FROM license_logs 
+                    ORDER BY timestamp DESC LIMIT 5""")
+        recent_logs = [dict(zip([col[0] for col in c.description], row)) 
+                      for row in c.fetchall()]
+        
+        conn.close()
+        
+        return jsonify({
+            'database_path': DB_PATH,
+            'log_count': log_count,
+            'stats_count': stats_count,
+            'recent_logs': recent_logs,
+            'timestamp': datetime.now().isoformat()
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'error': str(e),
+            'database_path': DB_PATH
+        }), 500
+
+# Add this to help debug database location
+print(f"Database path: {os.path.abspath(DB_PATH)}")
 
 if __name__ == '__main__':
     try:
