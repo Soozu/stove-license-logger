@@ -9,16 +9,22 @@ app = Flask(__name__)
 CORS(app)
 
 # Configuration
-PORT = int(os.environ.get('PORT', 5001))  # Different port from main license server
+PORT = int(os.environ.get('PORT', 8080))  # Railway.app uses port 8080 by default
 HOST = os.environ.get('HOST', '0.0.0.0')
 DEBUG = os.environ.get('DEBUG', 'False').lower() == 'true'
 API_KEY = os.environ.get('API_KEY', 'STOVE_ADMIN_2024_SECRET')
 
 # Database path
-DB_PATH = os.environ.get('LOG_DB_PATH', 'license_logs.db')
+DB_PATH = os.environ.get('LOG_DB_PATH', '/data/license_logs.db')
+
+def ensure_db_directory():
+    db_dir = os.path.dirname(DB_PATH)
+    if db_dir and not os.path.exists(db_dir):
+        os.makedirs(db_dir)
 
 def init_db():
     """Initialize SQLite database for license logs"""
+    ensure_db_directory()
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     
@@ -55,6 +61,16 @@ def require_api_key(f):
             return jsonify({'error': 'Unauthorized'}), 401
         return f(*args, **kwargs)
     return decorated
+
+@app.route('/', methods=['GET'])
+def index():
+    """Root endpoint"""
+    return jsonify({
+        'service': 'STOVE License Logger',
+        'status': 'online',
+        'version': '1.0.0',
+        'timestamp': datetime.now().isoformat()
+    })
 
 @app.route('/health', methods=['GET'])
 def health_check():
