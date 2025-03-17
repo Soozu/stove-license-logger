@@ -16,7 +16,7 @@ DEBUG = os.environ.get('DEBUG', 'False').lower() == 'true'
 API_KEY = os.environ.get('API_KEY', 'STOVE_ADMIN_2024_SECRET')
 
 # Database path
-DB_PATH = os.environ.get('LOG_DB_PATH', '/data/license_logs.db')
+DB_PATH = os.environ.get('LOG_DB_PATH', 'license_logs.db')  # Default to current directory if not set
 
 def ensure_db_directory():
     db_dir = os.path.dirname(DB_PATH)

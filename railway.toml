@@ -2,7 +2,7 @@
 builder = "nixpacks"
 
 [deploy]
-startCommand = "python license_logger.py"
+startCommand = "gunicorn --bind 0.0.0.0:$PORT license_logger:app"
 healthcheckPath = "/health"
 healthcheckTimeout = 300
 
