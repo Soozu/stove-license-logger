@@ -8,6 +8,7 @@ import time
 import psycopg2
 from psycopg2.extras import DictCursor
 from urllib.parse import urlparse
+import json
 
 app = Flask(__name__)
 CORS(app)
@@ -64,7 +65,7 @@ def get_db_connection():
         raise
 
 def init_db():
-    """Initialize PostgreSQL database for license logs"""
+    """Initialize PostgreSQL database for license management"""
     retries = 3
     last_error = None
     
@@ -75,35 +76,56 @@ def init_db():
             conn = get_db_connection()
             cur = conn.cursor()
             
-            # Create logs table
-            cur.execute('''CREATE TABLE IF NOT EXISTS license_logs
+            # Create users table
+            cur.execute('''CREATE TABLE IF NOT EXISTS users
                      (id SERIAL PRIMARY KEY,
-                      license_key TEXT NOT NULL,
-                      user_id TEXT,
+                      user_id TEXT UNIQUE NOT NULL,
+                      email TEXT UNIQUE,
+                      name TEXT,
+                      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+            
+            # Create licenses table
+            cur.execute('''CREATE TABLE IF NOT EXISTS licenses
+                     (id SERIAL PRIMARY KEY,
+                      license_key TEXT UNIQUE NOT NULL,
+                      status TEXT NOT NULL DEFAULT 'active',
+                      type TEXT NOT NULL DEFAULT 'premium',
+                      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                      expires_at TIMESTAMP NOT NULL,
+                      max_devices INTEGER DEFAULT 1)''')
+            
+            # Create user_licenses table (many-to-many relationship)
+            cur.execute('''CREATE TABLE IF NOT EXISTS user_licenses
+                     (id SERIAL PRIMARY KEY,
+                      user_id INTEGER REFERENCES users(id),
+                      license_id INTEGER REFERENCES licenses(id),
+                      assigned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                      UNIQUE(user_id, license_id))''')
+            
+            # Create license_activity table
+            cur.execute('''CREATE TABLE IF NOT EXISTS license_activity
+                     (id SERIAL PRIMARY KEY,
+                      license_id INTEGER REFERENCES licenses(id),
+                      user_id INTEGER REFERENCES users(id),
                       action TEXT NOT NULL,
                       status TEXT NOT NULL,
                       ip_address TEXT,
                       device_info TEXT,
-                      timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                      additional_info TEXT)''')
+                      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
             
-            # Create summary table
-            cur.execute('''CREATE TABLE IF NOT EXISTS license_stats
-                     (license_key TEXT PRIMARY KEY,
-                      total_validations INTEGER DEFAULT 0,
-                      last_validation TIMESTAMP,
-                      active_devices INTEGER DEFAULT 0,
-                      failed_attempts INTEGER DEFAULT 0,
-                      last_ip TEXT)''')
+            # Create device_activations table
+            cur.execute('''CREATE TABLE IF NOT EXISTS device_activations
+                     (id SERIAL PRIMARY KEY,
+                      license_id INTEGER REFERENCES licenses(id),
+                      user_id INTEGER REFERENCES users(id),
+                      device_id TEXT NOT NULL,
+                      device_name TEXT,
+                      last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                      is_active BOOLEAN DEFAULT true,
+                      UNIQUE(license_id, device_id))''')
             
             conn.commit()
             print("Database tables created successfully")
-            
-            # Test write access
-            cur.execute("INSERT INTO license_logs (license_key, user_id, action, status) VALUES (%s, %s, %s, %s)",
-                     ('TEST-KEY', 'test-user', 'init', 'test'))
-            conn.commit()
-            print("Database write test successful")
             return True
             
         except Exception as e:
@@ -161,68 +183,168 @@ def health_check():
         'timestamp': datetime.now().isoformat()
     }), 200
 
-@app.route('/api/log/validation', methods=['POST'])
+@app.route('/api/verify-license', methods=['POST'])
 @require_api_key
-def log_validation():
-    """Log a license validation attempt"""
+def verify_license():
+    """Verify a license key and log the attempt"""
     try:
         data = request.get_json()
-        print(f"Received log request: {data}")
-        
         license_key = data.get('license_key')
-        user_id = data.get('user_id', 'unknown')
-        status = data.get('status', 'unknown')
+        user_id = data.get('user_id')
         device_info = data.get('device_info', {})
+        device_id = device_info.get('device_id', '')
+        
+        if not license_key or not user_id:
+            return jsonify({
+                'valid': False,
+                'message': 'License key and user ID are required'
+            }), 400
         
         conn = get_db_connection()
-        cur = conn.cursor()
+        cur = conn.cursor(cursor_factory=DictCursor)
         
-        # Log the validation attempt
-        cur.execute('''INSERT INTO license_logs 
-                    (license_key, user_id, action, status, ip_address, device_info, additional_info)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)''',
-                (license_key, user_id, 'validation', status,
-                request.remote_addr,
-                str(device_info),
-                str(data.get('additional_info', ''))))
+        # Check if license exists and is valid
+        cur.execute('''
+            SELECT l.*, COUNT(da.id) as active_devices 
+            FROM licenses l 
+            LEFT JOIN device_activations da ON l.id = da.license_id AND da.is_active = true
+            WHERE l.license_key = %s
+            GROUP BY l.id
+        ''', (license_key,))
         
-        # Update statistics using upsert
-        cur.execute('''INSERT INTO license_stats 
-                    (license_key, total_validations, last_validation, active_devices, failed_attempts, last_ip)
-                    VALUES (%s, 1, CURRENT_TIMESTAMP,
-                        CASE WHEN %s = 'valid' THEN 1 ELSE 0 END,
-                        CASE WHEN %s != 'valid' THEN 1 ELSE 0 END,
-                        %s)
-                    ON CONFLICT (license_key) DO UPDATE SET
-                        total_validations = license_stats.total_validations + 1,
-                        last_validation = CURRENT_TIMESTAMP,
-                        active_devices = CASE 
-                            WHEN %s = 'valid' 
-                            THEN license_stats.active_devices + 1
-                            ELSE license_stats.active_devices
-                        END,
-                        failed_attempts = CASE 
-                            WHEN %s != 'valid' 
-                            THEN license_stats.failed_attempts + 1
-                            ELSE license_stats.failed_attempts
-                        END,
-                        last_ip = %s''',
-                (license_key, status, status, request.remote_addr,
-                 status, status, request.remote_addr))
+        license_data = cur.fetchone()
+        
+        if not license_data:
+            return jsonify({
+                'valid': False,
+                'message': 'Invalid license key'
+            }), 404
+        
+        # Convert to dict for easier access
+        license_info = dict(license_data)
+        
+        # Check if license is expired
+        if license_info['expires_at'] < datetime.now():
+            return jsonify({
+                'valid': False,
+                'message': 'License has expired'
+            }), 400
+        
+        # Check if maximum devices reached
+        if license_info['active_devices'] >= license_info['max_devices']:
+            return jsonify({
+                'valid': False,
+                'message': 'Maximum number of devices reached'
+            }), 400
+        
+        # Get or create user
+        cur.execute('''
+            INSERT INTO users (user_id) 
+            VALUES (%s)
+            ON CONFLICT (user_id) DO UPDATE SET user_id = EXCLUDED.user_id
+            RETURNING id
+        ''', (user_id,))
+        user_db_id = cur.fetchone()['id']
+        
+        # Link user to license if not already linked
+        cur.execute('''
+            INSERT INTO user_licenses (user_id, license_id)
+            VALUES (%s, %s)
+            ON CONFLICT (user_id, license_id) DO NOTHING
+        ''', (user_db_id, license_info['id']))
+        
+        # Register device if not already registered
+        if device_id:
+            cur.execute('''
+                INSERT INTO device_activations 
+                (license_id, user_id, device_id, device_name, is_active)
+                VALUES (%s, %s, %s, %s, true)
+                ON CONFLICT (license_id, device_id) 
+                DO UPDATE SET last_active = CURRENT_TIMESTAMP, is_active = true
+            ''', (license_info['id'], user_db_id, device_id, device_info.get('device_name', '')))
+        
+        # Log the activity
+        cur.execute('''
+            INSERT INTO license_activity 
+            (license_id, user_id, action, status, ip_address, device_info)
+            VALUES (%s, %s, %s, %s, %s, %s)
+        ''', (license_info['id'], user_db_id, 'validation', 'success', 
+              request.remote_addr, json.dumps(device_info)))
         
         conn.commit()
-        cur.close()
-        conn.close()
+        
+        # Calculate days remaining
+        days_remaining = (license_info['expires_at'] - datetime.now()).days
         
         return jsonify({
-            'success': True,
-            'message': 'Validation logged successfully'
+            'valid': True,
+            'type': license_info['type'],
+            'status': license_info['status'],
+            'expires_at': license_info['expires_at'].isoformat(),
+            'days_remaining': days_remaining,
+            'active_devices': license_info['active_devices'],
+            'max_devices': license_info['max_devices']
         })
         
     except Exception as e:
-        error_msg = f"Error logging validation: {str(e)}"
-        print(error_msg)
-        return jsonify({'error': error_msg}), 500
+        print(f"Error verifying license: {e}")
+        return jsonify({
+            'valid': False,
+            'message': 'Internal server error'
+        }), 500
+    finally:
+        if 'cur' in locals():
+            cur.close()
+        if 'conn' in locals():
+            conn.close()
+
+@app.route('/api/license/activity', methods=['GET'])
+@require_api_key
+def get_license_activity():
+    """Get activity history for a license"""
+    try:
+        license_key = request.args.get('license_key')
+        user_id = request.args.get('user_id')
+        
+        if not license_key:
+            return jsonify({'error': 'License key is required'}), 400
+            
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=DictCursor)
+        
+        # Get license activity with user details
+        cur.execute('''
+            SELECT 
+                la.created_at,
+                la.action,
+                la.status,
+                la.ip_address,
+                la.device_info,
+                u.user_id,
+                u.email,
+                u.name
+            FROM license_activity la
+            JOIN licenses l ON la.license_id = l.id
+            JOIN users u ON la.user_id = u.id
+            WHERE l.license_key = %s
+            ORDER BY la.created_at DESC
+            LIMIT 50
+        ''', (license_key,))
+        
+        activities = [dict(row) for row in cur.fetchall()]
+        
+        return jsonify({
+            'activities': activities
+        })
+        
+    except Exception as e:
+        print(f"Error getting license activity: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+    finally:
+        if 'cur' in locals():
+            cur.close()
+        if 'conn' in locals():
+            conn.close()
 
 @app.route('/api/logs/search', methods=['GET'])
 @require_api_key
